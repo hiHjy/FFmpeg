@@ -72,6 +72,73 @@
    > └── FFmpeg 的播放器组件
    > ```
 
+4. 解码为yuv
+
+   ```bash
+   ffmpeg -i input.mp4 -vf fps=1 frame_%03d.yuv
+   ```
+
+   > 从视频里
+   >  **每秒取 1 帧**
+   >  **解码成原始像素数据**
+   >  保存成 `.yuv` 文件
+
+5. 播放yuv
+
+   ```bash
+   ffplay -f rawvideo -pixel_format yuv420p -video_size 1280x720 f.yuv 
+   ```
+
+   > 没有容器
+   >
+   > 没有时间戳
+   >
+   > 没有元数据
+   >
+   > 
+   >
+   > 这一条命令，背后等价于：
+   >
+   > 1. 打开输入（format）
+   > 2. 找 video stream
+   > 3. 创建 decoder
+   > 4. packet → frame
+   > 5. frame 里是：
+   >    - `frame->data[0]` → Y
+   >    - `frame->data[1]` → U
+   >    - `frame->data[2]` → V
+
+6. yuv->rgb
+
+   ```bash
+   ffmpeg -i 2.mp4 -vf fps=1,format=rgb24 -f rawvideo f.rgb
+   ```
+
+7. 播放rgb
+
+   ```bash
+   ffplay -f rawvideo -pixel_format rgb24 -video_size 1280x720 f.rgb
+   ```
+
+8. 逐帧输出原始rgb数据到标准输出然后用ffplay去解析并输出到标准输出
+
+   ```bash
+   ffmpeg -i 2.mp4 -f rawvideo -pix_fmt rgb24 - | \
+   ffplay -f rawvideo -pixel_format rgb24 -video_size 1280x720 -
+   ```
+
+   > -： 标准输出
+
+9. 调用摄像头（mac)
+
+   ``` bash
+   ffplay -f avfoundation -framerate 30 -video_size 640x480 -i "0"
+   ```
+
+## 库的使用
+
+- 
+
 ## 音频
 
 ### 为什么要进行数模转换

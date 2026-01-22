@@ -2,88 +2,88 @@
 
 extern "C" {
 
-#include <libavutil/avutil.h>
-#include <libavdevice/avdevice.h>
-#include <libavformat/avformat.h>
-#include <libavcodec/avcodec.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <assert.h>
+
+#include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/error.h>
 }
+static void print_error(const char *msg, int err)
+{
+    char buf[256];
+    av_strerror(err, buf, sizeof(buf));
+    fprintf(stderr, "%s: %s\n", msg, buf);
+    
+}
+
+/*
+    result：
+    nb_stream = 2
+    stream #0: type:video codec_id=27       h.264
+    stream #1: type:audio codec_id=86018    aac 
+*/
 
 using namespace std;
 int main (int argc, char **argv) 
 {
-    //注册所有的设备
-    avdevice_register_all(); 
-
-    //获得格式
-    const AVInputFormat * format = av_find_input_format("avfoundation");
-    AVFormatContext *context = NULL; //上下文
-    //打开设备
-
-    char err[1024];
-    printf("打开设备前\n");
-    int ret = avformat_open_input(&context, ":1", format, NULL);
-    if (ret != 0) {
-        av_strerror(ret, err, sizeof(err));
-        printf("%s\n", err);
-        return -1;  
+    int i;
+    //打开的这个输入整体 -------> ffmpeg -i input.mp4
+    AVFormatContext *fmt_ctx = NULL;
+    
+    int ret = avformat_open_input(&fmt_ctx, "test.mp4", NULL, NULL);
+    if (ret < 0) {
+        print_error("avformat_open_input", ret);
+        return ret;
     }
-    printf("打开设备后\n");
 
-    printf("获取流信息前\n");
-    ret = avformat_find_stream_info(context, NULL);
-    assert(ret >= 0);
-    printf("获取流信息后\n");
-    printf("获取流信息后，流数量：%d\n", context->nb_streams);
-
-    // 打印流信息（调试用）
-    av_dump_format(context, 0, ":1", 0);
-
-    printf("申请内存前\n");
-    AVPacket *pkt = av_packet_alloc();
-    if (!pkt) { 
-        printf("av_packet_alloc\n");
-        return -1;
+    // 解析流 ffmpeg -i input.mp4 输出的stream的相关行
+    ret = avformat_find_stream_info(fmt_ctx, NULL);
+    if (ret < 0) {
+        print_error("avformat_find_stream_info", ret);
+        return ret;
     }
-     printf("申请内存前\n");
-    //av_init_packet(&pkt);
-    //从设备中读取音频
-    printf("进入循环前\n");
-    int count = 0;
-    while (true) { 
 
+    //输出有几个流 video and audio
+    printf("nb_stream = %d\n", fmt_ctx->nb_streams); 
 
-        //printf("111%d\n", pkt.size);
-        av_packet_unref(pkt);
-        ret = av_read_frame(context, pkt);
-        if (ret != 0) {
-            av_strerror(ret, err, sizeof(err));
-            if (ret == AVERROR(EAGAIN)) {
+    //遍历每个流
+    for (i = 0; i < fmt_ctx->nb_streams; ++i) {
+        //获取每个流的指针
+        AVStream *stream = fmt_ctx->streams[i]; 
 
-                printf("不是错误\n");
-                usleep(500000);
-                continue;
-            }
-            printf("%s\n", err);
-            return -1;
-            
-        }
-        printf("第%d个数据包,大小:%d\n", count, pkt->size);
-        count++;
-        if (count >= 10) {
-            printf("已读满10个数据包\n");
-            av_packet_unref(pkt);
-            av_packet_free(&pkt);
-            return 0;
-        }
-        // context->
+        //获取这个流的的参数
+        AVCodecParameters *acp = stream->codecpar;
+        const char *type;
+        switch (acp->codec_type)
+        {
+        case AVMEDIA_TYPE_VIDEO:
+            /* code */
+            type = "video";
+            break;
+        case AVMEDIA_TYPE_AUDIO:
+            type = "audio";
+            break;
+        case AVMEDIA_TYPE_SUBTITLE:
+            type = "subtitle";
         
-        // printf("hhh\n");
+        default:
+            type = "other";
+            break;
+        }
+        printf("stream #%u: type:%s codec_id=%d\n", i, type, acp->codec_id);
+        // if (acp->codec_type == AVMEDIA_TYPE_VIDEO) {
+        //     printf("视频流: stream#%u %u * %u\n", i, acp->width, acp->height);
+
+        // }
+
+        
 
     }
 
-    return 0;
+
+    avformat_close_input(&fmt_ctx); //释放资源
+
+   return 0; 
 }
