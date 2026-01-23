@@ -135,9 +135,213 @@
    ffplay -f avfoundation -framerate 30 -video_size 640x480 -i "0"
    ```
 
-## 库的使用
 
-- 
+# 库的使用
+## 一、整体认知（先立世界观）
+
+### 1️⃣ 容器 vs 编码
+
+- **容器（Container）**
+  - mp4 / mkv / flv / rtsp
+  - 作用：存放多路流（视频 / 音频 / 字幕）
+- **编码（Codec）**
+  - H.264 / H.265 / AAC
+  - 作用：压缩数据
+
+FFmpeg 的职责：
+
+- `libavformat`：处理**容器**
+- `libavcodec`：处理**编码 / 解码**
+
+------
+
+### 2️⃣ Packet 与 Frame 的本质区别
+
+| 名称       | 含义                               |
+| ---------- | ---------------------------------- |
+| `AVPacket` | **压缩后的原始数据**（来自容器）   |
+| `AVFrame`  | **解码后的一帧数据**（可直接使用） |
+
+关键认知：
+
+- **AVPacket ≠ 一帧**
+- 一个 packet：
+  - 可能是半帧
+  - 可能是多帧
+  - 可能只是 SPS / PPS
+- **绝不能假设：packet == frame**
+
+------
+
+## 二、解码整体流程（你现在已经完整跑通）
+
+### Step 1：打开输入（容器层）
+
+```
+AVFormatContext *fmt_ctx = NULL;
+avformat_open_input(&fmt_ctx, "test.mp4", NULL, NULL);
+avformat_find_stream_info(fmt_ctx, NULL);
+```
+
+含义：
+
+- 打开 mp4 文件
+- 解析容器结构，获取流信息
+
+------
+
+### Step 2：枚举流，找到视频流
+
+```
+for (i = 0; i < fmt_ctx->nb_streams; i++) {
+    AVCodecParameters *acp = fmt_ctx->streams[i]->codecpar;
+    if (acp->codec_type == AVMEDIA_TYPE_VIDEO) {
+        video_index = i;
+    }
+}
+```
+
+- 一个文件里可能有多路流
+- 视频流、音频流是 **交错出现的**
+- 必须记录 `video_index`
+
+------
+
+### Step 3：找到解码器并打开
+
+```
+decoder = avcodec_find_decoder(video_acp->codec_id);
+dec_ctx = avcodec_alloc_context3(decoder);
+avcodec_parameters_to_context(dec_ctx, video_acp);
+avcodec_open2(dec_ctx, decoder, NULL);
+```
+
+你现在清楚地知道：
+
+- `AVCodecParameters`：**说明书**
+- `AVCodec`：**解码器型号**
+- `AVCodecContext`：**真正工作的解码器实例**
+
+------
+
+## 三、send / receive 模型（核心理解）
+
+### 1️⃣ send / receive 是**解耦的**
+
+```
+Packet（输入） → 解码器内部缓存 → Frame（输出）
+```
+
+- `avcodec_send_packet`：投喂压缩数据
+- `avcodec_receive_frame`：尝试取一帧解码结果
+- **二者不是一进一出**
+
+------
+
+### 2️⃣ 为什么 receive 必须循环？
+
+```
+avcodec_send_packet(dec_ctx, pkt);
+
+while (1) {
+    ret = avcodec_receive_frame(dec_ctx, frame);
+    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+        break;
+    // got frame
+}
+```
+
+原因：
+
+- 一个 packet：
+  - 可能解不出 frame
+  - 也可能解出多个 frame
+- `receive_frame` **一次最多返回一帧**
+- 所以必须循环接收，直到：
+  - `EAGAIN`（需要更多 packet）
+  - `EOF`
+
+------
+
+### 3️⃣ EAGAIN 的真实语义（你已经吃透）
+
+| 场景       | EAGAIN 含义     | 正确行为                     |
+| ---------- | --------------- | ---------------------------- |
+| 解码阶段   | 需要更多 packet | 回到外层继续 `av_read_frame` |
+| flush 阶段 | 没东西可吐了    | `break` 退出                 |
+
+------
+
+## 四、主解码循环（标准模板）
+
+```
+while (av_read_frame(fmt_ctx, pkt) >= 0) {
+
+    if (pkt->stream_index == video_index) {
+
+        avcodec_send_packet(dec_ctx, pkt);
+
+        while (1) {
+            ret = avcodec_receive_frame(dec_ctx, frame);
+
+            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+                break;
+
+            // 成功拿到一帧
+            printf("get frame %dx%d\n", frame->width, frame->height);
+            av_frame_unref(frame);
+        }
+    }
+
+    av_packet_unref(pkt);
+}
+```
+
+你现在已经理解：
+
+- `av_read_frame` 读的是 **packet**
+- packet 可能是视频 / 音频
+- 只有 `stream_index == video_index` 才送解码器
+
+------
+
+## 五、为什么必须 flush（你已经亲眼验证）
+
+### 1️⃣ 问题来源
+
+- H.264 / H.265 存在：
+  - B 帧
+  - 帧重排
+  - 延迟输出
+
+**文件读完 ≠ 解码结束**
+
+------
+
+### 2️⃣ flush 的标准写法
+
+```
+avcodec_send_packet(dec_ctx, NULL); // 通知解码器：没输入了
+
+while (1) {
+    ret = avcodec_receive_frame(dec_ctx, frame);
+
+    if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN))
+        break;
+
+    printf("[flush] get frame\n");
+    av_frame_unref(frame);
+}
+```
+
+- flush 阶段还能拿到帧
+- 不 flush 会丢最后几帧
+
+------
+
+
+
+
 
 ## 音频
 
