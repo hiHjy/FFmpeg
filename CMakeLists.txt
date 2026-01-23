@@ -89,7 +89,7 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
 # 定义一个可执行文件：
 #   目标名：test
 #   源文件：test.cpp
-add_executable(test test.cpp)
+add_executable(video2yuv video2yuv.cpp)
 
 
 # ============================================================
@@ -102,7 +102,7 @@ add_executable(test test.cpp)
 #   这些库只对 test 生效
 #   不会传递给依赖 test 的其他目标（当前项目只有一个 target）
 #
-target_link_libraries(test PRIVATE
+target_link_libraries(video2yuv PRIVATE
     ${OpenCV_LIBS}     # OpenCV 所需的所有库
     PkgConfig::FFMPEG # FFmpeg（通过 pkg-config 自动整理好的目标）
 )
@@ -118,7 +118,7 @@ target_link_libraries(test PRIVATE
 
 # 为 test 添加 OpenCV 的头文件搜索路径
 # 相当于编译器参数中的：-I/path/to/opencv/include
-target_include_directories(test PRIVATE
+target_include_directories(video2yuv PRIVATE
     ${OpenCV_INCLUDE_DIRS}
 )
 

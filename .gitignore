@@ -1,5 +1,6 @@
 # Prerequisites
 *.d
+*.yuv
 /build/
 # Compiled Object files
 *.slo
