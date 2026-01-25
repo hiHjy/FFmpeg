@@ -127,9 +127,12 @@ int main (int argc, char **argv)
         if (ret <= 0) {
             std::cerr << "sws_scale error" << std::endl;
             return -1;
-        }   
-        
-        cv::imshow("cam", cv_buf);
+        }
+        cv::Mat gray;
+        cv::cvtColor(cv_buf, gray, cv::COLOR_BGR2GRAY);
+        cv::imshow("cam", gray);
+        cv::rectangle(cv_buf, cv::Rect(100, 100, 200, 150), cv::Scalar(0, 255, 0));
+        cv::imshow("origin", cv_buf);
         cv::waitKey(1);
        
         av_packet_unref(pkt);
