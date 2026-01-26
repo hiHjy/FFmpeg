@@ -360,3 +360,82 @@ PCM是音频的原始数据，要获得原始数据需要知道3个概念
 码率：采样大小 x 频率 x 声道数 
 
 码率表示一秒的大小，这个数据是非常大的，所以需要编码，使得它变小
+
+# 笔记
+
+## 如何使用ffmpeg 去图像的格式
+
+要用sws_scale函数进行转换，这其中的关键就是准备输出的缓冲区
+
+```c
+int sws_scale(
+    SwsContext *c,                          // 转换上下文，包含所有转换参数
+    const uint8_t *const srcSlice[],        // 源图像数据平面数组（YUV各平面或RGB数据）
+    const int srcStride[],                  // 源图像每个平面的行跨度（步长/stride），字节为单位
+    int srcSliceY,                          // 要处理的源图像起始行（通常为0）
+    int srcSliceH,                          // 要处理的源图像高度（通常为图像总高度）
+    uint8_t *const dst[],                   // 目标图像数据平面数组
+    const int dstStride[]                   // 目标图像每个平面的行跨度（步长/stride），字节为单位
+);
+```
+
+
+
+分为两种情况：
+
+不管哪种情况都要先描述你要输出的那块区域的信息
+
+- 转换的目标缓冲区是ffmpeg**外部的**
+
+  比如OpenCV的`cv::Mat`
+
+```cpp
+cv::Mat mat(h, w, CV_8UC3);
+
+AVFrame* bgrf = av_frame_alloc(); 
+bgrf->format = AV_PIX_FMT_BGR24;  //转换的目标格式
+bgrf->width  = w;									//cv::Mat 的w （真实的宽度）
+bgrf->height = h;									//cv::Mat 的h	（真实的高度度）
+bgrf->data[0] = mat.data;					//cv::Mat 数据的首地址
+bgrf->linesize[0] = (int)mat.step;//mat.step可能会自动内存对齐，会被填充 （步长有可能大于w*一个像素占的字节数）
+```
+
+​	转换的时候就这么传参数
+
+```c
+sws_scale(...,bgrf->data, bgrf->linesize);
+```
+
+转化外部的缓冲区时还可以自己构造参数
+
+```c
+uint8_t* data[4] = { ... }
+int linesize[4] = { ... }
+```
+
+然后这样调用
+
+```c
+sws_scale(...,data, linesize);
+```
+
+同样也可以达到同样的效果
+
+- 转换的目标缓冲区是ffmpeg内部的
+
+  ```c
+  AVFrame* dst = av_frame_alloc(); 
+  dst->format = AV_PIX_FMT_YUV420P; 
+  dst->width  = w;
+  dst->height = h;
+  av_frame_get_buffer(dst, 32); //关键的一句，用于转换内部的时，会根据格式，给这个AVFrame填充dst->data, dst->linesize 
+  ```
+
+  转换是还是这样调用
+
+  ```c
+  sws_scale(...,dst->data, dst->linesize); 
+  ```
+
+<div style="color: red; background-color: #ffeeee; padding: 10px; border-left: 4px solid red; margin: 10px 0;">  转换外部的缓冲区时不能调用这个 av_frame_get_buffer()</div>
+

@@ -106,6 +106,8 @@ int main (int argc, char **argv)
         goto err;
     }
 
+    
+
     //创建解码器实例
     dec_ctx = avcodec_alloc_context3(decoder);
     if (dec_ctx == NULL) {

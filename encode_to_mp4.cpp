@@ -20,6 +20,8 @@ H.264 packet
      mux = 媒体数据的秩序层
      mux = 时间 + 参数 + 结构
      mux = 推流不可缺的中间层
+     编码解决“怎么压缩”，
+    mux 解决“别人怎么理解你压缩出来的东西”。
 */
 
 
@@ -53,11 +55,13 @@ int main (int argc, char **argv)
     int ret = -1;
     cv::Mat cv_buf;
     avdevice_register_all();
+    //相机要求的参数
     AVDictionary *opt = nullptr;
+
     av_dict_set(&opt, "framerate", "30", 0);
     av_dict_set(&opt, "video_size", "640x480", 0);
     av_dict_set(&opt, "pixel_format", "yuyv422", 0);
-    int fd = open("../test.h264", O_RDWR | O_CREAT | O_TRUNC, 0644 );
+
     
     //** 输出为mp4文件 创建mp4输出上下文 */
     AVFormatContext *ofmt = nullptr;
@@ -73,6 +77,7 @@ int main (int argc, char **argv)
         return -1;
     }
 
+    //找相机设备
     if ((ret = avformat_open_input(&fmt_ctx, "0", av_find_input_format("avfoundation"),  &opt)) < 0) {
         print_error("avformat_open_input error", ret);
         return -1;
@@ -96,9 +101,9 @@ int main (int argc, char **argv)
         std::cout << "未找到视频流" << std::endl;
         return -1;
     }
-
+    
     AVStream *vs = fmt_ctx->streams[video_index];
-    AVCodecParameters *acp = vs->codecpar;
+    AVCodecParameters *acp = vs->codecpar;          //相机的流参数
 
     /* -------------------------创建编码器--------------------- */
 
@@ -113,9 +118,11 @@ int main (int argc, char **argv)
         std::cerr << "avcodec_alloc_context3 error" << std::endl;
         return -1;
     }
+
+    //告诉解码器你要解的流是怎么样子的，你就告诉它相机的参数就可以了，你要编的的码也是相机采集的画面嘛
     enc_ctx->width = acp->width;
     enc_ctx->height = acp->height;
-    enc_ctx->pix_fmt = AV_PIX_FMT_YUV420P; //编码器得是这个格式
+    enc_ctx->pix_fmt = AV_PIX_FMT_YUV420P; //编码器得是这个格式，可用于mp4，rtsp
     enc_ctx->time_base = {1, 30};
     enc_ctx->framerate = {30, 1};
     enc_ctx->bit_rate = 800000; //不知道是啥
@@ -123,7 +130,13 @@ int main (int argc, char **argv)
     av_opt_set(enc_ctx->priv_data, "tune", "zerolatency", 0);
     av_opt_set(enc_ctx->priv_data, "preset", "veryfast", 0);
 
-    //把编码器的信息拷贝到mp4流中
+    ret = avcodec_open2(enc_ctx, encoder, NULL); //启动
+    if (ret < 0) {
+        print_error("avcodec_open2", ret);
+        return -1;
+    }
+
+    //把编码器的信息拷贝到新的mp4流中
     ret = avcodec_parameters_from_context(new_stream->codecpar, enc_ctx);
     if (ret < 0) {
         print_error("avcodec_parameters_from_context", ret);
@@ -142,6 +155,7 @@ int main (int argc, char **argv)
             print_error("avio_open", ret);
             return -1;
         }
+
         //将容器mp4的头部信息（Header） 写入文件。
         ret = avformat_write_header(ofmt, nullptr);
         if (ret < 0) {
@@ -151,11 +165,7 @@ int main (int argc, char **argv)
     }
 
 
-    ret = avcodec_open2(enc_ctx, encoder, NULL); //启动
-    if (ret < 0) {
-        print_error("avcodec_open2", ret);
-        return -1;
-    }
+  
     std::cerr << "enc time_base = " << enc_ctx->time_base.num << "/" << enc_ctx->time_base.den << "\n";
     std::cerr << "enc framerate = " << enc_ctx->framerate.num << "/" << enc_ctx->framerate.den << "\n";
 
@@ -193,6 +203,7 @@ int main (int argc, char **argv)
         
     );
 
+
     SwsContext *sws_enc_ctx =  sws_getContext(
         acp->width,
         acp->height,
@@ -206,6 +217,8 @@ int main (int argc, char **argv)
         nullptr
         
     );
+
+    
     if (!sws_ctx || !sws_enc_ctx) {
         std::cout << "sws_ctx error" << std::endl;
         return -1;
@@ -230,7 +243,6 @@ int main (int argc, char **argv)
     while (frame_count < 100) {
         ret = av_read_frame(fmt_ctx, pkt);
        
-        
 
         if (ret == AVERROR(EAGAIN)) {
             usleep(1000);
@@ -261,6 +273,7 @@ int main (int argc, char **argv)
         frame->data[0] = pkt->data;
         frame->linesize[0] = acp->width *2;
         
+        //yuyv422 -> bgr 用于cv::Mat
         ret = sws_scale(
          sws_ctx,
          frame->data,
@@ -270,6 +283,7 @@ int main (int argc, char **argv)
          cv_data,
          cv_linesize 
         );
+
         if (ret <= 0) {
             std::cerr << "sws_scale error" << std::endl;
             return -1;
@@ -281,16 +295,16 @@ int main (int argc, char **argv)
         //cv::Mat gray;
         //cv::cvtColor(cv_buf, gray, cv::COLOR_BGR2GRAY);
         // cv::imshow("cam", gray);
-        cv::rectangle(cv_buf, cv::Rect(100, 100, 200, 150), cv::Scalar(0, 255, 0));
+        cv::rectangle(cv_buf, cv::Rect(100, 100, 200, 150), cv::Scalar(0, 255, 0)); //简单的画个框
         // cv::imshow("origin", cv_buf);
         // cv::waitKey(1);
         
-        ret = av_frame_make_writable(enc_frame);
+        ret = av_frame_make_writable(enc_frame); //
         if (ret < 0) {
             print_error("av_frame_make_writable", ret);
             return -1;
         }
-        ret = sws_scale( //cv处理后的数据，转为yuv420p
+        ret = sws_scale( //cv处理后的数据，转为yuv420p 
             sws_enc_ctx,
             cv_data,
             cv_linesize,
@@ -299,13 +313,14 @@ int main (int argc, char **argv)
             enc_frame->data,
             enc_frame->linesize
         );
-        //编码
+        
         if (ret <= 0) {
             print_error("sws_scale error[enc]", ret); 
             return -1;
         }
+        //编码 
         enc_frame->pts = pts++;
-        ret = avcodec_send_frame(enc_ctx, enc_frame);
+        ret = avcodec_send_frame(enc_ctx, enc_frame);//编码将AVFrame 一帧的数据交给编码器编码
         if (ret < 0) {
             print_error("sws_scale error[enc]", ret); 
             return -1;
@@ -334,7 +349,7 @@ int main (int argc, char **argv)
                 new_stream->time_base
             );
 
-            ret = av_interleaved_write_frame(ofmt, enc_pkt);
+            ret = av_interleaved_write_frame(ofmt, enc_pkt); //写入
             if (ret < 0) {
                 print_error("av_interleaved_write_frame", ret);
                 return -1;
