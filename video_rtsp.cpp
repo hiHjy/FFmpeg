@@ -24,6 +24,16 @@ H.264 packet
     mux 解决“别人怎么理解你压缩出来的东西”。
 */
 
+// 1. 打开摄像头 (avfoundation)
+// 2. 创建 RTSP 输出 + 新 stream
+// 3. 初始化 x264 编码器
+// 4. 写 RTSP header（建立会话）
+// 5. 采集一帧摄像头数据
+// 6. YUYV → BGR (给 OpenCV)
+// 7. OpenCV 画框
+// 8. BGR → YUV420P
+// 9. 送编码器，取 packet
+// 10. 写入 RTSP
 
 #include <iostream>
 #include <opencv2/opencv.hpp>
@@ -68,6 +78,7 @@ int main (int argc, char **argv)
         std::cerr << "avformat_alloc_output_context2 failed\n";
         return -1;
     }
+    
     //给这个rtsp格式的文件创建一个新流
     AVStream *new_stream = avformat_new_stream(ofmt, nullptr);
     if (!new_stream) {
@@ -122,6 +133,8 @@ int main (int argc, char **argv)
     enc_ctx->framerate = {30, 1};
     enc_ctx->bit_rate = 800000; //不知道是啥
     enc_ctx->max_b_frames = 0; //关闭B帧
+    enc_ctx->gop_size = 30; //每 30 帧来一个“完整可独立解码的 I 帧（关键帧)
+    enc_ctx->keyint_min = 30; //保证至少每30帧就会有一个关键帧
     av_opt_set(enc_ctx->priv_data, "tune", "zerolatency", 0);
     av_opt_set(enc_ctx->priv_data, "preset", "veryfast", 0);
 
@@ -290,7 +303,7 @@ int main (int argc, char **argv)
         // cv::imshow("origin", cv_buf);
         // cv::waitKey(1);
         
-        ret = av_frame_make_writable(enc_frame);
+        ret = av_frame_make_writable(enc_frame); //防止上一帧没处理完，又开始转换下一帧，导致数据被覆盖
         if (ret < 0) {
             print_error("av_frame_make_writable", ret);
             return -1;
@@ -304,6 +317,7 @@ int main (int argc, char **argv)
             enc_frame->data,
             enc_frame->linesize
         );
+
         //编码
         if (ret <= 0) {
             print_error("sws_scale error[enc]", ret); 
@@ -330,8 +344,10 @@ int main (int argc, char **argv)
             enc_pkt->duration =1;
             
             //打包了一个packet
-            enc_count++;
-            std::cout << "编码获得第 "<< enc_count << "个packet" << std::endl;
+            // enc_count++;
+            // std::cout << "编码获得第 "<< enc_count << "个packet" << std::endl;
+            printf("pts=%d, time=%.3f\n",(int)enc_frame->pts,enc_frame->pts * av_q2d(enc_ctx->time_base));
+
             enc_pkt->stream_index = new_stream->index;
 
             //时间戳换算
@@ -341,7 +357,7 @@ int main (int argc, char **argv)
                 new_stream->time_base
             );
             
-            ret = av_interleaved_write_frame(ofmt, enc_pkt);
+            ret = av_interleaved_write_frame(ofmt, enc_pkt); //推流
             if (ret < 0) {
                 print_error("av_interleaved_write_frame", ret);
                 return -1;
